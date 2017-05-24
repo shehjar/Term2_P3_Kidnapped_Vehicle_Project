@@ -65,6 +65,19 @@ inline double * getError(double gt_x, double gt_y, double gt_theta, double pf_x,
 	return error;
 }
 
+/*
+ * Computes the Gaussian probability between two 2D points.
+ * @param LandmarkObs pt1 -> x and y coordinates of first point
+ * @param LandmarkObs pt2 -> x and y coordinates of second point
+ * @param (std_x, std_y) are the standard deviation of 2D coordinates
+ * @output Gaussian probability between two 2D points
+ */
+inline double gaussian_prob(LandmarkObs pt1, LandmarkObs pt2, double std_xy[]){
+  double Coeff = 1/(2*M_PI*std_xy[0]*std_xy[1]);
+  double expFactor = -0.5*((pt1.x - pt2.x)*(pt1.x - pt2.x)/(std_xy[0]*std_xy[0]) + (pt1.y - pt2.y)*(pt1.y - pt2.y)/(std_xy[1]*std_xy[1]));
+  return Coeff*exp(expFactor);
+}
+
 /* Reads map data from a file.
  * @param filename Name of file containing map data.
  * @output True if opening and reading file was successful

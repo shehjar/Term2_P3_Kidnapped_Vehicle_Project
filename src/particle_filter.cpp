@@ -17,19 +17,20 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 	//   x, y, theta and their uncertainties from GPS) and all weights to 1.
 	// Add random Gaussian noise to each particle.
 	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
-	num_particles = 1000;
+	num_particles = 100;
 	std::default_random_engine gen_init;
 	std::normal_distribution<double> dist_x(x, std[0]);
 	std::normal_distribution<double> dist_y(y, std[1]);
 	std::normal_distribution<double> dist_theta(theta, std[2]);
+	particles.resize(num_particles);
+	weights.resize(num_particles);
 	for (int i=0; i<num_particles; i++){
-	  Particle sample_particle;
-    sample_particle.id = i;
-    sample_particle.x = dist_x(gen_init);
-    sample_particle.y = dist_y(gen_init);
-    sample_particle.theta = dist_theta(gen_init);
-    sample_particle.weight = 1.0;
-    particles.push_back(sample_particle);
+    particles[i].id = i;
+    particles[i].x = dist_x(gen_init);
+    particles[i].y = dist_y(gen_init);
+    particles[i].theta = dist_theta(gen_init);
+    particles[i].weight = 1.0;
+    weights[i] = 1.0;
 	}
   is_initialized = true;
 }
@@ -68,7 +69,28 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 	//   observed measurement to this particular landmark.
 	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to
 	//   implement this method and use it as a helper during the updateWeights phase.
-
+  //float dist=INFINITY;
+  std::vector<double> euDist;
+  if(!observations.empty() && !predicted.empty()){
+    for (size_t i=0; i<observations.size(); i++){
+      for (size_t j=0; j<predicted.size(); j++){
+        euDist.push_back(dist(observations[i].x,observations[i].y, predicted[j].x, predicted[j].y));
+      }
+      std::vector<double>::iterator min_val_ptr = std::min_element(std::begin(euDist), std::end(euDist));
+      int ind_lm = std::distance(std::begin(euDist),min_val_ptr);
+      // For DEBUGGING ONLY ->
+      //for (auto elem : euDist){
+      //  std::cout<< elem<<" ";
+      //}
+      //std::cout<<"\n";
+      //std::cout<<"The minimum index is "<< ind_lm<< std::endl;
+      observations[i].id = predicted[ind_lm].id;
+      euDist.erase(euDist.begin(),euDist.end());
+    }
+  }
+  else{
+    std::cout<<"Data Association cannot be performed if one of the vectors is empty!\n";
+  }
 }
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
@@ -84,13 +106,84 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   3.33. Note that you'll need to switch the minus sign in that equation to a plus to account
 	//   for the fact that the map's y-axis actually points downwards.)
 	//   http://planning.cs.uiuc.edu/node99.html
+	//   std::cout <<"Observation vector size="<< observations.size()<<std::endl;
+
+	std::vector <LandmarkObs> transObs;
+	std::vector<LandmarkObs> predLandmarks;
+	// Browse through every particle
+	for (int i=0; i<num_particles; i++){
+    double theta = particles[i].theta;
+    double x = particles[i].x;
+    double y = particles[i].y;
+    // Create a list of Landmarks within the range of the particle
+    for (size_t k=0; k<map_landmarks.landmark_list.size(); k++){
+      LandmarkObs lm;
+      Map::single_landmark_s lm_map = map_landmarks.landmark_list[k];
+      lm.id = lm_map.id_i;
+      lm.x = (double) lm_map.x_f;
+      lm.y = (double) lm_map.y_f;
+      if (dist(x,y,lm.x,lm.y) <= sensor_range){
+        predLandmarks.push_back(lm);
+      }
+    }
+    // Transform the observation coordinates to Map coordinates
+    for (size_t j=0; j<observations.size(); j++){
+      LandmarkObs t_obs;
+      double obs_x = observations[j].x;
+      double obs_y = observations[j].y;
+      double cos_theta = cos(theta);
+      double sin_theta = sin(theta);
+      t_obs.id = observations[j].id;
+      t_obs.x = x + cos_theta*obs_x - sin_theta*obs_y;
+      t_obs.y = y + cos_theta*obs_y + sin_theta*obs_x;
+      transObs.push_back(t_obs);
+    }
+    // Associate Actual Landmarks with Transformed Observations.
+    dataAssociation(predLandmarks,transObs);
+    //for(auto& obs:transObs){
+    //  obs.id = predLandmarks[0].id;
+    //}
+    // Update weights based on Landmark and observation distances.
+    double wt = 1;
+    while (!transObs.empty()){
+      LandmarkObs lastObs = transObs.back();
+      transObs.pop_back();
+      for (size_t m=0; m<predLandmarks.size(); m++){
+        if (lastObs.id == predLandmarks[m].id){
+          wt *= gaussian_prob(lastObs, predLandmarks[m], std_landmark);
+          break;
+        }
+      }
+    }
+    particles[i].weight = wt;
+    weights[i] = wt;
+    // Empty the predLandmark vector
+    predLandmarks.clear();
+    // Check if vectors are empty
+    if (!transObs.empty() || !predLandmarks.empty()){
+      std::cout<< "The vectors are not empty!!"<<std::endl;
+    }
+	}
+
 }
 
 void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight.
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
-
+	//Setup random bits
+	//std::random_device rd;
+	//std::mt19937 gen(rd());
+  std::default_random_engine gen;
+  //std::default_random_engine gen;
+  std::discrete_distribution<> discDist(weights.begin(),weights.end());
+  std::vector<Particle> particlesResampled;
+  particlesResampled.resize(num_particles);
+  for (int i=0; i<num_particles; i++){
+    int index = discDist(gen);
+    particlesResampled[i] = particles[index];
+  }
+  particles = particlesResampled;
 }
 
 void ParticleFilter::write(std::string filename) {
